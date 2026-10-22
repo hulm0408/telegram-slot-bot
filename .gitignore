@@ -33,3 +33,6 @@ checkout_*.mjs
 scratch/
 scratch_*
 *.mp4
+extract_frames.py
+extracted_mp4_frames/
+competitor-flow.js

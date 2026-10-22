@@ -2103,6 +2103,24 @@ bot.action(/^resend_otp_(\d{10})$/, async (ctx) => {
   const existingName = existing?.[1]?.name || previousState?.name || null;
 
   const result = await requestSwiggyOtpViaBridge(userId, phone, existingKey, existingName);
+  if (result.needsName) {
+    userWaitState[userId] = {
+      action: 'waiting_name_for_new_number_signup',
+      phone,
+      targetAcc: existingKey
+    };
+    await ctx.reply(
+      `👤 <b>Naya Swiggy Account Detect Hua Hai!</b>\n☎ Mobile: <code>${escapeHtml(phone)}</code>\n\n› <i>Kripya is account ke liye <b>Name</b> enter karein:</i>`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: {
+          force_reply: true,
+          input_field_placeholder: 'Enter Name...'
+        }
+      }
+    );
+    return;
+  }
   if (result.success) {
     userWaitState[userId] = {
       action: 'waiting_swiggy_otp_bridge',
@@ -3091,21 +3109,37 @@ bot.action(/^relogin_phone_(\d{10})$/, async (ctx) => {
   const db = getDb();
   const existing = Object.entries(db.config?.accounts || {}).find(([k, a]) => normalizeIndianMobileNumber(a.phone || a.mobile || k.replace(/^acc_/, '')) === phone);
   const accKey = existing ? existing[0] : `acc_${phone}`;
-  const accName = existing?.[1]?.name || getNextAutoUserName();
+  const cleanAccName = (existing?.[1]?.name && !/^user\s*\d*$/i.test(existing[1].name.trim())) ? existing[1].name.trim() : null;
 
   await ctx.answerCbQuery(`Sending OTP to ${phone}... !`).catch(() => {});
   const waitMsg = await ctx.reply(`☎ <b>Requesting Swiggy OTP for <code>${phone}</code>...</b>`, { parse_mode: 'HTML' });
 
   try {
-    const result = await requestSwiggyOtpViaBridge(ctx.from.id, phone, accKey, accName);
+    const result = await requestSwiggyOtpViaBridge(ctx.from.id, phone, accKey, cleanAccName);
     try { await bot.telegram.deleteMessage(ctx.chat.id, waitMsg.message_id); } catch (e) {}
+
+    if (result.needsName) {
+      userWaitState[ctx.from.id] = {
+        action: 'waiting_name_for_new_number_signup',
+        phone,
+        targetAcc: accKey
+      };
+      await ctx.reply(
+        `👤 <b>Naya Swiggy Account Detect Hua Hai!</b>\n☎ Mobile: <code>${escapeHtml(phone)}</code>\n\n› <i>Kripya is account ke liye <b>Name</b> enter karein:</i>`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: { force_reply: true, input_field_placeholder: 'Enter Name...' }
+        }
+      );
+      return;
+    }
 
     if (result.success) {
       userWaitState[ctx.from.id] = {
         action: 'waiting_swiggy_otp_bridge',
         targetAcc: accKey,
         phone,
-        name: accName
+        name: cleanAccName || result.accountName || ''
       };
       await ctx.reply(
         `☎ <b>Swiggy OTP Sent!</b>\n` +
@@ -3162,19 +3196,38 @@ bot.action(/^boss_login_acc_otp_(.+)$/, async (ctx) => {
     );
   }
 
+  const cleanAccName = (acc?.name && !/^user\s*\d*$/i.test(acc.name.trim()) && !/^acc_\d+$/i.test(acc.name.trim())) ? acc.name.trim() : null;
+
   await ctx.answerCbQuery(`Sending OTP to ${phone}... !`).catch(() => {});
   const waitMsg = await ctx.reply(`☎ <b>Requesting Swiggy OTP for ${escapeHtml(phone)} (${escapeHtml(accName)})...</b>`, { parse_mode: 'HTML' });
 
   try {
-    const result = await requestSwiggyOtpViaBridge(ctx.from.id, phone, accKey, accName);
+    const result = await requestSwiggyOtpViaBridge(ctx.from.id, phone, accKey, cleanAccName);
     try { await bot.telegram.deleteMessage(ctx.chat.id, waitMsg.message_id); } catch (e) {}
+
+    if (result.needsName) {
+      userWaitState[ctx.from.id] = {
+        action: 'waiting_name_for_new_number_signup',
+        phone,
+        targetAcc: accKey,
+        orderId
+      };
+      await ctx.reply(
+        `👤 <b>Naya Swiggy Account Detect Hua Hai!</b>\n☎ Mobile: <code>${escapeHtml(phone)}</code>\n\n› <i>Kripya is account ke liye <b>Name</b> enter karein:</i>`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: { force_reply: true, input_field_placeholder: 'Enter Name...' }
+        }
+      );
+      return;
+    }
 
     if (result.success) {
       userWaitState[ctx.from.id] = {
         action: 'waiting_swiggy_otp_bridge',
         targetAcc: accKey,
         phone,
-        name: accName,
+        name: cleanAccName || result.accountName || accName,
         orderId
       };
       await ctx.reply(
@@ -4401,14 +4454,30 @@ bot.action(/^boss_fast_otp_(.+)_(\d{10})$/, async (ctx) => {
   await ctx.answerCbQuery(`Sending OTP to ${phone}... !`).catch(() => {});
   const db = getDb();
   const accName = db.config.accounts?.[targetAcc]?.name || targetAcc;
+  const cleanAccName = (accName && !/^user\s*\d*$/i.test(accName.trim()) && !/^acc_\d+$/i.test(accName.trim())) ? accName.trim() : null;
 
-  const result = await requestSwiggyOtpViaBridge(ctx.from.id, phone, targetAcc, accName);
+  const result = await requestSwiggyOtpViaBridge(ctx.from.id, phone, targetAcc, cleanAccName);
+  if (result.needsName) {
+    userWaitState[ctx.from.id] = {
+      action: 'waiting_name_for_new_number_signup',
+      phone,
+      targetAcc
+    };
+    await ctx.reply(
+      `👤 <b>Naya Swiggy Account Detect Hua Hai!</b>\n☎ Mobile: <code>${escapeHtml(phone)}</code>\n\n› <i>Kripya is account ke liye <b>Name</b> enter karein:</i>`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: { force_reply: true, input_field_placeholder: 'Enter Name...' }
+      }
+    );
+    return;
+  }
   if (result.success) {
     userWaitState[ctx.from.id] = {
       action: 'waiting_swiggy_otp_bridge',
       targetAcc,
       phone,
-      name: accName
+      name: cleanAccName || result.accountName || accName
     };
     await ctx.reply(
       `☎ <b>OTP Sent</b>\n☎ <code>${phone}</code>\n\n› <i>Enter OTP:</i>`,
@@ -6633,6 +6702,21 @@ bot.on('text', async (ctx) => {
     delete userWaitState[userId];
     createAccount(cleanKey, accName, phone);
     const result = await requestSwiggyOtpViaBridge(userId, phone, cleanKey, accName);
+    if (result.needsName) {
+      userWaitState[userId] = {
+        action: 'waiting_name_for_new_number_signup',
+        phone,
+        targetAcc: cleanKey
+      };
+      await ctx.reply(
+        `👤 <b>Naya Swiggy Account Detect Hua Hai!</b>\n☎ Mobile: <code>${escapeHtml(phone)}</code>\n\n› <i>Kripya is account ke liye <b>Name</b> enter karein:</i>`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: { force_reply: true, input_field_placeholder: 'Enter Name...' }
+        }
+      );
+      return;
+    }
     if (result.success) {
       userWaitState[userId] = { action: 'waiting_swiggy_otp_bridge', targetAcc: cleanKey, phone, name: accName };
       await ctx.reply(
@@ -6835,13 +6919,12 @@ bot.on('text', async (ctx) => {
   // Helper for starting phone number login
   async function triggerPhoneNumberLogin(phoneToLogin, existingAccKey, existingAccName) {
     const accKey = existingAccKey || `acc_${phoneToLogin}`;
-    const cleanName = (existingAccName && existingAccName.trim().length >= 2 && !/^user\s*\d*$/i.test(existingAccName.trim()))
+    const cleanName = (existingAccName && existingAccName.trim().length >= 2 && !/^user\s*\d*$/i.test(existingAccName.trim()) && !/^acc_\d+$/i.test(existingAccName.trim()))
       ? existingAccName.trim()
       : null;
-    const autoName = cleanName || getNextAutoUserName();
     delete userWaitState[userId];
 
-    const result = await requestSwiggyOtpViaBridge(userId, phoneToLogin, accKey, autoName);
+    const result = await requestSwiggyOtpViaBridge(userId, phoneToLogin, accKey, cleanName);
 
     if (result.needsName) {
       userWaitState[userId] = {
@@ -6850,12 +6933,18 @@ bot.on('text', async (ctx) => {
         targetAcc: accKey
       };
 
-      await ctx.reply('› Enter Name:', {
-        reply_markup: {
-          force_reply: true,
-          input_field_placeholder: 'Enter Name...'
+      await ctx.reply(
+        `👤 <b>Naya Swiggy Account Detect Hua Hai!</b>\n` +
+        `☎ Mobile: <code>${escapeHtml(phoneToLogin)}</code>\n\n` +
+        `› <i>Kripya is account ke liye <b>Name</b> enter karein:</i>`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: {
+            force_reply: true,
+            input_field_placeholder: 'Enter Name...'
+          }
         }
-      });
+      );
       return;
     }
 
@@ -6864,7 +6953,7 @@ bot.on('text', async (ctx) => {
         action: 'waiting_swiggy_otp_bridge',
         targetAcc: accKey,
         phone: phoneToLogin,
-        name: autoName
+        name: cleanName || result.accountName || ''
       };
 
       await ctx.reply(
@@ -6941,15 +7030,32 @@ bot.on('text', async (ctx) => {
     return;
   }
 
-  // C: Handle Name for New Swiggy User Signup (auto-handled)
+  // C: Handle Name for New Swiggy User Signup (prompted)
   if (state && state.action === 'waiting_name_for_new_swiggy_signup') {
-    const enteredName = rawText.trim() || getNextAutoUserName();
+    const enteredName = rawText.trim();
+    if (!enteredName || enteredName.length < 2 || /^\d+$/.test(enteredName)) {
+      await ctx.reply(
+        '› Kripya valid Name enter karein (kam se kam 2 characters):',
+        {
+          reply_markup: {
+            force_reply: true,
+            input_field_placeholder: 'Enter Name...'
+          }
+        }
+      );
+      return;
+    }
     const cleanPhone = state.phone;
+    const targetAcc = state.targetAcc || `acc_${cleanPhone}`;
     const orderId = state.orderId;
     delete userWaitState[userId];
 
+    // Persist entered name to the account
+    updateAccount(targetAcc, { name: enteredName, swiggyName: enteredName, phone: cleanPhone, mobile: cleanPhone });
+
     const signupRes = await signupSwiggyViaBridge(userId, enteredName);
     if (signupRes.success) {
+      updateAccount(targetAcc, { name: enteredName, swiggyName: enteredName });
       await sendAccountLoginAndOffersCard(ctx, signupRes, userId, orderId);
     } else if (['SWIGGY_SECURITY_CHALLENGE', 'SWIGGY_RATE_LIMIT'].includes(signupRes.code)) {
       const errCard = formatOtpSendErrorCard(cleanPhone, signupRes);
@@ -6964,17 +7070,22 @@ bot.on('text', async (ctx) => {
   if (state && state.action === 'waiting_name_for_new_number_signup') {
     const enteredName = rawText.trim();
     if (!enteredName || enteredName.length < 2 || /^\d+$/.test(enteredName)) {
-      await ctx.reply('› Enter Name:', {
-        reply_markup: {
-          force_reply: true,
-          input_field_placeholder: 'Enter Name...'
+      await ctx.reply(
+        '› Kripya valid Name enter karein (kam se kam 2 characters):',
+        {
+          reply_markup: {
+            force_reply: true,
+            input_field_placeholder: 'Enter Name...'
+          }
         }
-      });
+      );
       return;
     }
     const phone = state.phone;
+    const targetAcc = state.targetAcc || `acc_${phone}`;
     delete userWaitState[userId];
-    await triggerPhoneNumberLogin(phone, `acc_${phone}`, enteredName);
+    updateAccount(targetAcc, { name: enteredName, swiggyName: enteredName, phone, mobile: phone });
+    await triggerPhoneNumberLogin(phone, targetAcc, enteredName);
     return;
   }
 
@@ -7007,16 +7118,37 @@ bot.on('text', async (ctx) => {
     }
 
     const existingTarget = getDb().config?.accounts?.[targetAcc];
-    const autoName = existingTarget?.name || getNextAutoUserName();
-    createAccount(targetAcc, autoName, cleanPhone);
-    const result = await requestSwiggyOtpViaBridge(userId, cleanPhone, targetAcc, autoName);
+    const targetName = (existingTarget?.name && !/^user\s*\d*$/i.test(existingTarget.name.trim()) && !/^acc_\d+$/i.test(existingTarget.name.trim())) ? existingTarget.name.trim() : null;
+    const result = await requestSwiggyOtpViaBridge(userId, cleanPhone, targetAcc, targetName);
+
+    if (result.needsName) {
+      userWaitState[userId] = {
+        action: 'waiting_name_for_new_number_signup',
+        phone: cleanPhone,
+        targetAcc
+      };
+      await ctx.reply(
+        `👤 <b>Naya Swiggy Account Detect Hua Hai!</b>\n` +
+        `☎ Mobile: <code>${escapeHtml(cleanPhone)}</code>\n\n` +
+        `› <i>Kripya is account ke liye <b>Name</b> enter karein:</i>`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: {
+            force_reply: true,
+            input_field_placeholder: 'Enter Name...'
+          }
+        }
+      );
+      return;
+    }
 
     if (result.success) {
+      createAccount(targetAcc, targetName || cleanPhone, cleanPhone);
       userWaitState[userId] = {
         action: 'waiting_swiggy_otp_bridge',
         targetAcc,
         phone: cleanPhone,
-        name: autoName
+        name: targetName || result.accountName || ''
       };
 
       await ctx.reply(
@@ -7122,16 +7254,24 @@ bot.on('text', async (ctx) => {
     const result = await verifySwiggyOtpViaBridge(userId, enteredOtp);
 
     if (result.isNewUser) {
-      // Auto-assign sequential name without prompting user
-      const autoName = state.name || getNextAutoUserName();
-      const signupRes = await signupSwiggyViaBridge(userId, autoName);
-      if (signupRes.success) {
-        const orderId = state.orderId;
-        delete userWaitState[userId];
-        await sendAccountLoginAndOffersCard(ctx, signupRes, userId, orderId);
-      } else {
-        await ctx.reply(`<blockquote>${escapeHtml(signupRes.message)}</blockquote>`, { parse_mode: 'HTML', ...getBossPanelKeyboard() });
-      }
+      userWaitState[userId] = {
+        action: 'waiting_name_for_new_swiggy_signup',
+        phone: state.phone,
+        targetAcc: state.targetAcc,
+        orderId: state.orderId
+      };
+      await ctx.reply(
+        `👤 <b>Naya Swiggy Account Detect Hua Hai!</b>\n` +
+        `☎ Mobile: <code>${escapeHtml(state.phone)}</code>\n\n` +
+        `› <i>Kripya is account ke liye <b>Name</b> enter karein:</i>`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: {
+            force_reply: true,
+            input_field_placeholder: 'Enter Name...'
+          }
+        }
+      );
       return;
     }
 

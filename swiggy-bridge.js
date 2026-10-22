@@ -53,6 +53,10 @@ let prewarmedBrowser = null;
 let prewarmedPage = null;
 let isPrewarming = false;
 let prewarmedAt = 0;
+let latestSharedWafToken = '';
+let latestSharedWafAt = 0;
+let wafSolvePromise = null;
+const WAF_CACHE_TTL_MS = 8 * 60 * 1000; // 8 minutes
 
 const SWIGGY_WAF_COOKIE_WAIT_MS = 15000;
 const SWIGGY_WAF_COOKIE_POLL_MS = 250;
@@ -733,6 +737,8 @@ export async function prewarmBrowser() {
     // Allow WAF page reload/navigation to settle
     await new Promise(r => setTimeout(r, 2000));
 
+    latestSharedWafToken = wafToken;
+    latestSharedWafAt = Date.now();
     prewarmedBrowser = browser;
     prewarmedPage = page;
     prewarmedAt = Date.now();
@@ -747,6 +753,62 @@ export async function prewarmBrowser() {
   } finally {
     isPrewarming = false;
   }
+}
+
+// Universal cached / live AWS WAF token provider for both swiggy-bridge and swiggy-cart
+export async function getLiveSwiggyWafToken(forceRefresh = false) {
+  const now = Date.now();
+  if (!forceRefresh && latestSharedWafToken && (now - latestSharedWafAt < WAF_CACHE_TTL_MS)) {
+    return latestSharedWafToken;
+  }
+
+  // 1. Check if prewarmedPage is alive and has an active WAF cookie (<5ms check):
+  if (!forceRefresh && prewarmedPage && prewarmedBrowser?.connected) {
+    try {
+      const cookies = await prewarmedPage.cookies('https://www.swiggy.com').catch(() => []);
+      const waf = cookies.find(c => c.name === 'aws-waf-token' && String(c.value || '').length > 50);
+      if (waf && waf.value) {
+        latestSharedWafToken = waf.value;
+        latestSharedWafAt = Date.now();
+        return latestSharedWafToken;
+      }
+    } catch {}
+  }
+
+  // 2. Coalesce concurrent requests so we only launch one solver:
+  if (wafSolvePromise) return wafSolvePromise;
+
+  wafSolvePromise = (async () => {
+    let browser = null;
+    try {
+      const launched = await launchStealthSwiggyBrowser();
+      browser = launched.browser;
+      const page = launched.page;
+
+      await page.goto('https://www.swiggy.com/', {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000
+      }).catch(() => {});
+
+      const token = await waitForSwiggyWafCookie(page, SWIGGY_WAF_COOKIE_WAIT_MS);
+      if (token) {
+        latestSharedWafToken = token;
+        latestSharedWafAt = Date.now();
+        // Allow challenge reload/navigation to settle
+        await new Promise(r => setTimeout(r, 1500));
+      }
+      await browser.close().catch(() => {});
+      return latestSharedWafToken || '';
+    } catch (err) {
+      if (browser) await browser.close().catch(() => {});
+      console.warn('[SwiggyBridge] WAF solver error:', err.message);
+      return latestSharedWafToken || '';
+    } finally {
+      wafSolvePromise = null;
+    }
+  })();
+
+  return wafSolvePromise;
 }
 
 export async function safeEvaluateAuthOnce(page, fn, ...args) {

@@ -648,7 +648,7 @@ try {
       status: 'Out for delivery'
     })
   });
-  await new Promise(resolve => setTimeout(resolve, 35));
+  await new Promise(resolve => setTimeout(resolve, 100));
   stopOrderDeliveryInfoPoller(pollOrderId);
   const polledOrder = getDb().orders[pollOrderId];
   assert(
@@ -989,7 +989,7 @@ try {
   const approvalWaitCallbacks = approvalWaitCard.keyboard.reply_markup.inline_keyboard.flat().map(button => button.callback_data).filter(Boolean);
   assert(!approvalWaitCallbacks.some(callback => /fwd_(?:gen_qr|send_summary|input_|rechoose_acc|rescan_max)_/.test(callback)), 'Approval-pending Boss card removes stale QR, edit, account, and duplicate-summary buttons');
   assert(getBillReadyOrdersWaitingForQr({ orders: { [approvalWaitOrder.id]: approvalWaitOrder } }).length === 0, 'Parallel QR queue excludes orders waiting for customer approval');
-  assert(indexSource.includes('async function handleConfirmOrderPaid(ctx, orderId, _confirmedBy) {\n  const result = await checkOrderPaidStatusOnly(orderId);'), 'Payment-confirmation tap only checks Swiggy status and cannot mark an order paid itself');
+  assert(indexSource.replace(/\r\n/g, '\n').includes('async function handleConfirmOrderPaid(ctx, orderId, _confirmedBy) {\n  const result = await checkOrderPaidStatusOnly(orderId);'), 'Payment-confirmation tap only checks Swiggy status and cannot mark an order paid itself');
   const completedGuard = await applyBossOrderUpdate({ orderId: 'MISSING_TEST_TERMINAL', cart: 'https://swig.gy/gc/example' });
   assert(!completedGuard.ok && /not found/.test(completedGuard.error), 'Boss order input fails closed for missing order IDs');
   db.orders.TELEGRAM_COMPLETED_TEST = { id: 'TELEGRAM_COMPLETED_TEST', status: 'COMPLETED' };

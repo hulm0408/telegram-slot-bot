@@ -76,7 +76,9 @@ import {
   generateRealSwiggyMerchantUpiQr,
   checkRealSwiggyPaymentAndExtractTracking,
   releaseSwiggyAccountReservation,
-  startWafKeepWarmLoop
+  startWafKeepWarmLoop,
+  dapiFetch,
+  getCachedWafToken
 } from './swiggy-cart.js';
 import {
   extractForwardSenderInfo,
@@ -4343,30 +4345,17 @@ bot.action('boss_refresh_all_accounts', async (ctx) => {
     }
 
     try {
-      const res = await fetch('https://www.swiggy.com/dapi/order/all', {
-        headers: {
-          'Cookie': cookieStr,
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
-          'Accept': 'application/json',
-          'Referer': 'https://www.swiggy.com/my-account'
-        },
-        signal: AbortSignal.timeout(7000)
-      });
+      const orderOut = await dapiFetch(acc, 'order/all', { timeoutMs: 12000 });
+      const json = orderOut?.json;
+      const statusCode = json?.statusCode;
 
-      const json = await res.json().catch(() => ({}));
-      const isExpired = res.status !== 200 || json.statusCode === 1 || !json.data;
-
-      if (isExpired) {
-        acc.isLoggedIn = false;
-        reportItems.push(
-          `<b>${i + 1}. ◉ ${escapeHtml(accName)}</b> (<code>${phone}</code>)\n` +
-          `• ◈ <b>Session:</b> × <b>Expired / Logged Out</b>\n`
-        );
-      } else {
+      if (orderOut?.status === 200 && json && statusCode === 0) {
         acc.isLoggedIn = true;
         if (json.tid) acc.tid = json.tid;
         const orders = json.data?.orders || [];
         if (orders.length > 0) {
+          acc.totalOrdersCount = orders.length;
+          acc.isZeroOrderAccount = false;
           const latest = orders[0];
           const orderTotal = latest.order_total || latest.net_total || 'N/A';
           reportItems.push(
@@ -4374,9 +4363,39 @@ bot.action('boss_refresh_all_accounts', async (ctx) => {
             `• ◈ <b>Session:</b> ● <b>Active</b> | ▣ ${orders.length} orders (Latest: #${latest.order_id || latest.id || ''} — ₹${orderTotal})\n`
           );
         } else {
+          acc.totalOrdersCount = 0;
+          acc.isZeroOrderAccount = true;
           reportItems.push(
             `<b>${i + 1}. ◉ ${escapeHtml(accName)}</b> (<code>${phone}</code>)\n` +
             `• ◈ <b>Session:</b> ● <b>Active (Fresh ID — 0 Orders)</b>\n`
+          );
+        }
+      } else if (statusCode === 1) {
+        acc.isLoggedIn = false;
+        reportItems.push(
+          `<b>${i + 1}. ◉ ${escapeHtml(accName)}</b> (<code>${phone}</code>)\n` +
+          `• ◈ <b>Session:</b> × <b>Expired / Logged Out</b>\n`
+        );
+      } else {
+        const liveOut = await verifySwiggySessionLive(acc).catch(() => null);
+        if (liveOut?.valid) {
+          acc.isLoggedIn = true;
+          if (liveOut.liveTid) acc.tid = liveOut.liveTid;
+          if (liveOut.token) acc.token = liveOut.token;
+          reportItems.push(
+            `<b>${i + 1}. ◉ ${escapeHtml(accName)}</b> (<code>${phone}</code>)\n` +
+            `• ◈ <b>Session:</b> ● <b>Active (${liveOut.transport || 'Verified'})</b>\n`
+          );
+        } else if (orderOut?.status === 202 || orderOut?.status === 403) {
+          reportItems.push(
+            `<b>${i + 1}. ◉ ${escapeHtml(accName)}</b> (<code>${phone}</code>)\n` +
+            `• ◈ <b>Session:</b> ⚠️ <b>CloudFront WAF Challenge (Session preserved)</b>\n`
+          );
+        } else {
+          acc.isLoggedIn = false;
+          reportItems.push(
+            `<b>${i + 1}. ◉ ${escapeHtml(accName)}</b> (<code>${phone}</code>)\n` +
+            `• ◈ <b>Session:</b> × <b>Expired / Logged Out</b>\n`
           );
         }
       }
@@ -8997,18 +9016,27 @@ async function handleAllOrdersDone(ctx) {
       });
     }
 
-    // Parallel fetch live orders from all logged-in accounts
-    const accountResults = await Promise.allSettled(
-      loggedInEntries.map(async ([key, acc]) => {
-        try {
-          const orders = await fetchAccountOrders(acc);
-          return { key, acc, orders: Array.isArray(orders) ? orders : [], isActive: key === activeKey };
-        } catch (err) {
-          console.error(`[ORDERS_DONE] Error fetching orders for ${acc?.name || key}:`, err?.message || err);
-          return { key, acc, orders: [], isActive: key === activeKey, error: err?.message };
-        }
-      })
-    );
+    // Fetch live orders from all logged-in accounts (with pre-warmed WAF and rate-safe pacing)
+    await getCachedWafToken(false).catch(() => {});
+    const accountResults = [];
+    for (const [key, acc] of loggedInEntries) {
+      try {
+        const orders = await fetchAccountOrders(acc);
+        accountResults.push({
+          status: 'fulfilled',
+          value: { key, acc, orders: Array.isArray(orders) ? orders : [], isActive: key === activeKey }
+        });
+      } catch (err) {
+        console.error(`[ORDERS_DONE] Error fetching orders for ${acc?.name || key}:`, err?.message || err);
+        accountResults.push({
+          status: 'fulfilled',
+          value: { key, acc, orders: [], isActive: key === activeKey, error: err?.message }
+        });
+      }
+      if (loggedInEntries.length > 1) {
+        await new Promise(r => setTimeout(r, 100));
+      }
+    }
 
     // Also collect completed orders recorded in db.orders
     const dbOrders = Object.values(db.orders || {});

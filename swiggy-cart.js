@@ -5757,6 +5757,7 @@ export async function syncGroupCartAndCheckoutForAccount(account, order, options
       return { fetchedAddrs, earlySaved, resolvedAddr };
     })();
 
+    const __t0 = Date.now();
     const [auth, eventsClaimRes, cartMeta, addrBundle, inspectedInitialCart] = await Promise.all([
       getSwiggySessionAuth(account, false),
       Promise.race([
@@ -5771,6 +5772,7 @@ export async function syncGroupCartAndCheckoutForAccount(account, order, options
     ]);
     const addrMeta = addrBundle.resolvedAddr;
     const savedAddresses = addrBundle.fetchedAddrs;
+    console.log(`[perf] sync wave1 (auth+address+cart read) took ${Date.now() - __t0}ms`);
 
     if (auth?.sessionExpired) {
       return {
@@ -6287,6 +6289,7 @@ export async function syncGroupCartAndCheckoutForAccount(account, order, options
       const couponsToTest = availableCoupons.filter(c => !mcpIneligibleCodes.has(c.code) || explicitlySelectedCodes.has(c.code));
       // SPEED: coupon trials mutate one server cart so they must be sequential; bound them by count + time budget.
       const trialDeadline = Date.now() + 3500;
+      const __trialStart = Date.now();
       let trialCount = 0;
       for (const cand of couponsToTest) {
         if (cand.code === bestCode && bestCartState.discountAmount > 0) {
@@ -6314,6 +6317,7 @@ export async function syncGroupCartAndCheckoutForAccount(account, order, options
         }
       }
 
+      console.log(`[perf] coupon trials: ${trialCount} tested in ${Date.now() - __trialStart}ms, best=${bestCode || 'none'}, verified=${validVerifiedCoupons.length}`);
       validVerifiedCoupons.sort((a, b) => {
         const payA = Number.isFinite(Number(a.finalPayable)) ? Number(a.finalPayable) : Number.POSITIVE_INFINITY;
         const payB = Number.isFinite(Number(b.finalPayable)) ? Number(b.finalPayable) : Number.POSITIVE_INFINITY;
